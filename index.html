@@ -9,6 +9,7 @@
   <link rel="icon" type="image/png" href="favicon-envelope-v5.png">
   <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon-v5.png">
   <link rel="apple-touch-icon" sizes="167x167" href="apple-touch-icon-167x167-v5.png">
+  <link rel="stylesheet" href="team-invites-sync.css">
   <meta name="apple-mobile-web-app-title" content="Team Invites">
   <style>
     @font-face {
@@ -1244,6 +1245,7 @@
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
+  <script src="team-invites-storage.js"></script>
   <script>
     "use strict";
 
@@ -1488,8 +1490,9 @@
     let hideMode = false;
     let toastTimer = null;
     let state = loadState();
-    let syncConfig = loadSyncConfig();
-    let syncSession = loadSyncSession();
+    activeProgram = state.preferences.activeProgram;
+    let syncConfig = LEGACY_SYNC_DISABLED ? null : loadSyncConfig();
+    let syncSession = LEGACY_SYNC_DISABLED ? null : loadSyncSession();
     let syncTimer = null;
     let syncInFlight = false;
     let syncLastError = "";
@@ -1518,7 +1521,10 @@
           NGA: blankTemplate("NGA"),
           USAG: blankTemplate("USAG")
         },
-        invites: []
+        invites: [],
+        preferences: {
+          activeProgram: "USAG"
+        }
       };
     }
 
@@ -1600,7 +1606,9 @@
         throw new Error("This backup contains an invalid program or invitation.");
       }
       invites.forEach((invite) => {
-        while (ids.has(invite.id)) invite.id = createId();
+        if (ids.has(invite.id)) {
+          throw new Error("This backup contains duplicate invitation IDs.");
+        }
         ids.add(invite.id);
       });
 
@@ -1613,15 +1621,18 @@
           NGA: normalizeTemplate(value.templates.NGA, "NGA"),
           USAG: normalizeTemplate(value.templates.USAG, "USAG")
         },
-        invites
+        invites,
+        preferences: {
+          activeProgram: PROGRAMS.includes(value.preferences?.activeProgram)
+            ? value.preferences.activeProgram
+            : "USAG"
+        }
       };
     }
 
     function loadState() {
       try {
-        const saved = localStorage.getItem(STORAGE_KEY);
-        if (!saved) return blankState();
-        return normalizeState(JSON.parse(saved));
+        return window.TeamInvitesStorage.loadState(blankState(), normalizeState);
       } catch (error) {
         console.warn("Could not load saved Team Invitations data.", error);
         return blankState();
@@ -1632,8 +1643,12 @@
       try {
         state.version = DATA_VERSION;
         state.updatedAt = new Date().toISOString();
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-        scheduleCloudSync();
+        void window.TeamInvitesStorage.saveState(state).then(() => {
+          window.TeamInvitesStorage.setEditorState({ dirty: false });
+        }).catch((error) => {
+          console.error("Could not save Team Invitations data.", error);
+          showToast(error.message || "This browser could not save your changes.");
+        });
         if (message) showToast(message);
         return true;
       } catch (error) {
@@ -1641,6 +1656,10 @@
         showToast("This browser could not save your changes.");
         return false;
       }
+    }
+
+    function setEditorActivity(update) {
+      window.TeamInvitesStorage.setEditorState(update);
     }
 
     function normalizeProjectUrl(value) {
@@ -1713,9 +1732,9 @@
 
     function renderSyncStatus() {
       if (LEGACY_SYNC_DISABLED) {
-        elements.syncButton.disabled = true;
-        elements.syncButton.textContent = "Private Sync Paused";
-        elements.syncStatus.textContent = "The older whole-app sync is paused while safe app-scoped sync is installed. This browser's copy stays unchanged.";
+        elements.syncButton.disabled = false;
+        elements.syncButton.textContent = "Sync & Backup";
+        elements.syncStatus.textContent = "App-scoped sync is ready. The older whole-app backup stays untouched.";
         return;
       }
       if (!syncConfig) {
@@ -2577,8 +2596,10 @@
     function deleteActiveInvite() {
       const invite = getActiveInvite();
       if (!invite) return;
+      setEditorActivity({ active: true });
       const name = invite.athleteName.trim() || "this untitled invitation";
       if (!window.confirm(`Delete the invitation for ${name}? This cannot be undone.`)) return;
+      setEditorActivity({ dirty: true });
       state.invites = state.invites.filter((item) => item.id !== invite.id);
       const remaining = invitesForProgram(activeProgram)
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
@@ -2608,6 +2629,7 @@
         control.addEventListener("input", handleTemplateFieldInput);
         control.addEventListener("change", handleTemplateFieldInput);
       });
+      setEditorActivity({ active: true, dirty: false });
       elements.templateDialog.showModal();
     }
 
@@ -2618,15 +2640,46 @@
       saveState();
     }
 
+    let editorBlurTimer = null;
+    elements.editorBody.addEventListener("focusin", () => {
+      window.clearTimeout(editorBlurTimer);
+      setEditorActivity({ active: true });
+    });
+    elements.editorBody.addEventListener("input", () => {
+      setEditorActivity({ active: true, dirty: true });
+    }, true);
+    elements.editorBody.addEventListener("change", () => {
+      setEditorActivity({ active: true, dirty: true });
+    }, true);
+    elements.editorBody.addEventListener("focusout", () => {
+      window.clearTimeout(editorBlurTimer);
+      editorBlurTimer = window.setTimeout(() => {
+        if (!elements.editorBody.contains(document.activeElement)) {
+          setEditorActivity({ active: false, dirty: false });
+        }
+      }, 0);
+    });
+    elements.templateFields.addEventListener("input", () => {
+      setEditorActivity({ active: true, dirty: true });
+    }, true);
+    elements.templateFields.addEventListener("change", () => {
+      setEditorActivity({ active: true, dirty: true });
+    }, true);
+    elements.templateDialog.addEventListener("close", () => {
+      setEditorActivity({ active: false, dirty: false });
+    });
+
     elements.tabs.forEach((tab) => {
       tab.addEventListener("click", () => {
         activeProgram = tab.dataset.program;
+        state.preferences.activeProgram = activeProgram;
         hideMode = false;
         const active = getActiveInvite();
         if (!active || active.program !== activeProgram) {
           activeInviteId = invitesForProgram(activeProgram)
             .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]?.id || null;
         }
+        saveState();
         render();
       });
     });
@@ -2673,14 +2726,29 @@
     });
     elements.copyButton.addEventListener("click", copyActiveInvite);
     elements.printButton.addEventListener("click", printActiveInvite);
-    elements.syncButton.addEventListener("click", openSyncDialog);
-    elements.closeSyncButton.addEventListener("click", () => elements.syncDialog.close());
-    elements.saveSyncConfigButton.addEventListener("click", () => {
-      if (saveSyncConfigurationFromDialog()) showToast("Private cloud connection saved on this device.");
+    if (!LEGACY_SYNC_DISABLED) {
+      elements.syncButton.addEventListener("click", openSyncDialog);
+      elements.closeSyncButton.addEventListener("click", () => elements.syncDialog.close());
+      elements.saveSyncConfigButton.addEventListener("click", () => {
+        if (saveSyncConfigurationFromDialog()) showToast("Private cloud connection saved on this device.");
+      });
+      elements.signInButton.addEventListener("click", () => void signInAndSync());
+      elements.signUpButton.addEventListener("click", () => void createSyncAccount());
+      elements.signOutButton.addEventListener("click", signOutOfSync);
+    }
+
+    window.addEventListener(window.TeamInvitesStorage.changeEvent, (event) => {
+      if (event.detail?.source === "local") return;
+      state = loadState();
+      activeProgram = state.preferences.activeProgram;
+      const current = getActiveInvite();
+      if (!current || current.program !== activeProgram) {
+        activeInviteId = invitesForProgram(activeProgram)
+          .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]?.id || null;
+      }
+      hideMode = false;
+      render();
     });
-    elements.signInButton.addEventListener("click", () => void signInAndSync());
-    elements.signUpButton.addEventListener("click", () => void createSyncAccount());
-    elements.signOutButton.addEventListener("click", signOutOfSync);
 
     renderStatusOptions();
     activeInviteId = invitesForProgram(activeProgram)
@@ -2689,5 +2757,8 @@
     renderSyncStatus();
     if (!LEGACY_SYNC_DISABLED && syncConfig && syncSession) void syncNow();
   </script>
+  <script src="https://ryan-app-sync.ryan-666-mp3.chatgpt.site/ryan-app-sync.js"
+    crossorigin="anonymous"></script>
+  <script src="team-invites-sync.js"></script>
 </body>
 </html>
