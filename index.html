@@ -1253,6 +1253,7 @@
     const SYNC_CONFIG_KEY = "team-invites-sync-config-v1";
     const SYNC_SESSION_KEY = "team-invites-sync-session-v1";
     const LOCAL_BACKUP_KEY_PREFIX = "team-invites-local-backup-";
+    const LEGACY_SYNC_DISABLED = true;
     const SYNC_DEBOUNCE_MS = 900;
     const PROGRAMS = ["NGA", "USAG"];
     const STATUSES = ["Draft", "Ready", "Invited", "Accepted", "Declined", "Hold"];
@@ -1711,6 +1712,12 @@
     }
 
     function renderSyncStatus() {
+      if (LEGACY_SYNC_DISABLED) {
+        elements.syncButton.disabled = true;
+        elements.syncButton.textContent = "Private Sync Paused";
+        elements.syncStatus.textContent = "The older whole-app sync is paused while safe app-scoped sync is installed. This browser's copy stays unchanged.";
+        return;
+      }
       if (!syncConfig) {
         elements.syncButton.textContent = "Set Up Private Sync";
         elements.syncStatus.textContent = "This device has an offline copy only.";
@@ -1752,6 +1759,7 @@
     }
 
     async function syncRequest(path, options = {}, accessToken = "") {
+      if (LEGACY_SYNC_DISABLED) throw new Error("The older private sync is paused for safe migration.");
       if (!syncConfig) throw new Error("Add the project URL and public key before syncing.");
       const headers = new Headers(options.headers || {});
       headers.set("apikey", syncConfig.anonKey);
@@ -1864,6 +1872,7 @@
     }
 
     function scheduleCloudSync() {
+      if (LEGACY_SYNC_DISABLED) return;
       if (!syncConfig || !syncSession) return;
       window.clearTimeout(syncTimer);
       syncTimer = window.setTimeout(() => {
@@ -2678,7 +2687,7 @@
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]?.id || null;
     render();
     renderSyncStatus();
-    if (syncConfig && syncSession) void syncNow();
+    if (!LEGACY_SYNC_DISABLED && syncConfig && syncSession) void syncNow();
   </script>
 </body>
 </html>
