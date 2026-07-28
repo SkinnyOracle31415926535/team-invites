@@ -157,6 +157,20 @@
       font-size: 0.95rem;
     }
 
+    .header-actions {
+      display: grid;
+      justify-items: end;
+      gap: 7px;
+    }
+
+    .sync-status {
+      max-width: 260px;
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.82rem;
+      text-align: right;
+    }
+
     .panel-actions,
     .preview-actions {
       display: flex;
@@ -873,8 +887,14 @@
     }
 
     .dialog-header h2 {
+      min-width: 0;
       margin: 0;
       color: var(--white);
+    }
+
+    .dialog-header .button {
+      flex: 0 0 auto;
+      white-space: nowrap;
     }
 
     .dialog-body {
@@ -888,8 +908,35 @@
 
     .dialog-footer {
       display: flex;
+      flex-wrap: wrap;
+      gap: 9px;
       justify-content: flex-end;
       padding-top: 14px;
+    }
+
+    .sync-help {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.84rem;
+      line-height: 1.45;
+    }
+
+    .sync-error {
+      min-height: 1.35em;
+      margin: 14px 0 0;
+      color: var(--danger);
+      font-weight: 700;
+    }
+
+    .sync-dialog-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 9px;
+      margin-top: 16px;
+    }
+
+    .sync-dialog-actions .button {
+      flex: 1 1 160px;
     }
 
     .toast {
@@ -935,6 +982,15 @@
       .app-header {
         display: grid;
         padding: 17px;
+      }
+
+      .header-actions {
+        justify-items: stretch;
+      }
+
+      .sync-status {
+        max-width: none;
+        text-align: left;
       }
 
       .workspace {
@@ -1058,7 +1114,11 @@
         <p class="brand-kicker">California Sports Center</p>
         <h1>Team Invitations</h1>
         <p class="brand-divider" aria-hidden="true">+---+---+---+</p>
-        <p class="privacy-note">Saved privately in this browser. Nothing is uploaded.</p>
+        <p class="privacy-note">Kept on this device until you connect your private cloud sync.</p>
+      </div>
+      <div class="header-actions">
+        <button class="button" id="syncButton" type="button">Set Up Private Sync</button>
+        <p class="sync-status" id="syncStatus" role="status">This device has an offline copy only.</p>
       </div>
     </header>
 
@@ -1146,13 +1206,54 @@
     </div>
   </dialog>
 
+  <dialog id="syncDialog" aria-labelledby="syncHeading">
+    <div class="dialog-header">
+      <h2 id="syncHeading">Private Cloud Sync</h2>
+      <button class="button" id="closeSyncButton" type="button">Close</button>
+    </div>
+    <div class="dialog-body">
+      <p class="dialog-note">Your invitations stay private: this app stores one encrypted-in-transit backup per signed-in account and keeps an offline copy on each device.</p>
+      <div class="form-grid">
+        <label class="field-full">
+          Supabase project URL
+          <input id="syncProjectUrl" type="url" inputmode="url" autocomplete="url" placeholder="https://your-project.supabase.co">
+        </label>
+        <label class="field-full">
+          Publishable or anon key
+          <input id="syncAnonKey" type="text" autocomplete="off" placeholder="Paste the public project key">
+        </label>
+        <label>
+          Email
+          <input id="syncEmail" type="email" autocomplete="email" placeholder="you@example.com">
+        </label>
+        <label>
+          Password
+          <input id="syncPassword" type="password" autocomplete="current-password" placeholder="At least 8 characters">
+        </label>
+      </div>
+      <p class="sync-help">Use the same project and account on each device. Never paste a Supabase service-role or secret key here.</p>
+      <div class="sync-dialog-actions">
+        <button class="button" id="saveSyncConfigButton" type="button">Save Connection</button>
+        <button class="button button-primary" id="signInButton" type="button">Sign In &amp; Sync</button>
+        <button class="button" id="signUpButton" type="button">Create Account</button>
+        <button class="button" id="signOutButton" type="button">Sign Out</button>
+      </div>
+      <p class="sync-error" id="syncError" role="alert" aria-live="assertive"></p>
+    </div>
+  </dialog>
+
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <script>
     "use strict";
 
     const STORAGE_KEY = "team-invites-v1";
-    const DATA_VERSION = 1;
+    const DATA_VERSION = 2;
+    const LEGACY_DATA_VERSION = 1;
+    const SYNC_CONFIG_KEY = "team-invites-sync-config-v1";
+    const SYNC_SESSION_KEY = "team-invites-sync-session-v1";
+    const LOCAL_BACKUP_KEY_PREFIX = "team-invites-local-backup-";
+    const SYNC_DEBOUNCE_MS = 900;
     const PROGRAMS = ["NGA", "USAG"];
     const STATUSES = ["Draft", "Ready", "Invited", "Accepted", "Declined", "Hold"];
     const MOVING_FORWARD_STATUSES = new Set(["Invited", "Accepted"]);
@@ -1363,6 +1464,19 @@
       templateFields: document.getElementById("templateFields"),
       closeTemplateButton: document.getElementById("closeTemplateButton"),
       doneTemplateButton: document.getElementById("doneTemplateButton"),
+      syncButton: document.getElementById("syncButton"),
+      syncStatus: document.getElementById("syncStatus"),
+      syncDialog: document.getElementById("syncDialog"),
+      closeSyncButton: document.getElementById("closeSyncButton"),
+      syncProjectUrl: document.getElementById("syncProjectUrl"),
+      syncAnonKey: document.getElementById("syncAnonKey"),
+      syncEmail: document.getElementById("syncEmail"),
+      syncPassword: document.getElementById("syncPassword"),
+      saveSyncConfigButton: document.getElementById("saveSyncConfigButton"),
+      signInButton: document.getElementById("signInButton"),
+      signUpButton: document.getElementById("signUpButton"),
+      signOutButton: document.getElementById("signOutButton"),
+      syncError: document.getElementById("syncError"),
       toast: document.getElementById("toast")
     };
 
@@ -1373,6 +1487,11 @@
     let hideMode = false;
     let toastTimer = null;
     let state = loadState();
+    let syncConfig = loadSyncConfig();
+    let syncSession = loadSyncSession();
+    let syncTimer = null;
+    let syncInFlight = false;
+    let syncLastError = "";
 
     function blankTemplate(program) {
       return {
@@ -1393,6 +1512,7 @@
     function blankState() {
       return {
         version: DATA_VERSION,
+        updatedAt: new Date().toISOString(),
         templates: {
           NGA: blankTemplate("NGA"),
           USAG: blankTemplate("USAG")
@@ -1466,7 +1586,7 @@
     }
 
     function normalizeState(value) {
-      if (!value || typeof value !== "object" || value.version !== DATA_VERSION) {
+      if (!value || typeof value !== "object" || ![LEGACY_DATA_VERSION, DATA_VERSION].includes(value.version)) {
         throw new Error("This backup is not a supported Team Invitations file.");
       }
       if (!value.templates || typeof value.templates !== "object" || !Array.isArray(value.invites)) {
@@ -1485,6 +1605,9 @@
 
       return {
         version: DATA_VERSION,
+        updatedAt: safeText(value.updatedAt, 80)
+          || invites.map((invite) => invite.updatedAt).sort().at(-1)
+          || new Date().toISOString(),
         templates: {
           NGA: normalizeTemplate(value.templates.NGA, "NGA"),
           USAG: normalizeTemplate(value.templates.USAG, "USAG")
@@ -1506,7 +1629,10 @@
 
     function saveState(message = "") {
       try {
+        state.version = DATA_VERSION;
+        state.updatedAt = new Date().toISOString();
         localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+        scheduleCloudSync();
         if (message) showToast(message);
         return true;
       } catch (error) {
@@ -1514,6 +1640,334 @@
         showToast("This browser could not save your changes.");
         return false;
       }
+    }
+
+    function normalizeProjectUrl(value) {
+      const candidate = safeText(value, 500).trim().replace(/\/+$/, "");
+      try {
+        const url = new URL(candidate);
+        return url.protocol === "https:" && url.hostname ? url.origin : "";
+      } catch {
+        return "";
+      }
+    }
+
+    function normalizeSyncConfig(value) {
+      if (!value || typeof value !== "object") return null;
+      const projectUrl = normalizeProjectUrl(value.projectUrl);
+      const anonKey = safeText(value.anonKey, 20000).trim();
+      if (!projectUrl || !anonKey || /service[_-]?role|sb_secret/i.test(anonKey)) return null;
+      return { projectUrl, anonKey };
+    }
+
+    function normalizeSyncSession(value) {
+      if (!value || typeof value !== "object") return null;
+      const userId = safeText(value.userId, 160);
+      const accessToken = safeText(value.accessToken, 20000);
+      const refreshToken = safeText(value.refreshToken, 20000);
+      const email = safeText(value.email, 320);
+      const expiresAt = Number(value.expiresAt);
+      if (!userId || !accessToken || !refreshToken || !Number.isFinite(expiresAt)) return null;
+      return { userId, accessToken, refreshToken, email, expiresAt };
+    }
+
+    function loadSyncConfig() {
+      try {
+        return normalizeSyncConfig(JSON.parse(localStorage.getItem(SYNC_CONFIG_KEY) || "null"));
+      } catch {
+        return null;
+      }
+    }
+
+    function loadSyncSession() {
+      try {
+        return normalizeSyncSession(JSON.parse(localStorage.getItem(SYNC_SESSION_KEY) || "null"));
+      } catch {
+        return null;
+      }
+    }
+
+    function persistStateWithoutSync() {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    }
+
+    function saveSyncConfig(config) {
+      syncConfig = config;
+      localStorage.setItem(SYNC_CONFIG_KEY, JSON.stringify(config));
+    }
+
+    function saveSyncSession(session) {
+      syncSession = session;
+      localStorage.setItem(SYNC_SESSION_KEY, JSON.stringify(session));
+    }
+
+    function clearSyncSession() {
+      syncSession = null;
+      localStorage.removeItem(SYNC_SESSION_KEY);
+    }
+
+    function setSyncError(message = "") {
+      elements.syncError.textContent = message;
+    }
+
+    function renderSyncStatus() {
+      if (!syncConfig) {
+        elements.syncButton.textContent = "Set Up Private Sync";
+        elements.syncStatus.textContent = "This device has an offline copy only.";
+        return;
+      }
+      if (!syncSession) {
+        elements.syncButton.textContent = "Sign In to Sync";
+        elements.syncStatus.textContent = "Private cloud connection saved. Sign in to sync this device.";
+        return;
+      }
+      if (syncLastError) {
+        elements.syncButton.textContent = "Private Sync Needs Attention";
+        elements.syncStatus.textContent = "The offline copy is safe, but the last cloud sync needs attention.";
+        return;
+      }
+      elements.syncButton.textContent = "Private Sync";
+      elements.syncStatus.textContent = syncInFlight
+        ? "Syncing your private backup…"
+        : "Private cloud sync is on. This device also keeps an offline copy.";
+    }
+
+    function hasLocalInvitationData() {
+      if (state.invites.length) return true;
+      return PROGRAMS.some((program) => TEMPLATE_TEXT_FIELDS.some((field) => state.templates[program][field]));
+    }
+
+    function backupCurrentLocalState() {
+      try {
+        localStorage.setItem(`${LOCAL_BACKUP_KEY_PREFIX}${Date.now()}`, JSON.stringify(state));
+      } catch (error) {
+        console.warn("Could not preserve a local backup before cloud restore.", error);
+      }
+    }
+
+    function formatSyncError(response, fallback) {
+      return response.json()
+        .then((payload) => safeText(payload.message || payload.msg || payload.error_description || payload.error, 400) || fallback)
+        .catch(() => fallback);
+    }
+
+    async function syncRequest(path, options = {}, accessToken = "") {
+      if (!syncConfig) throw new Error("Add the project URL and public key before syncing.");
+      const headers = new Headers(options.headers || {});
+      headers.set("apikey", syncConfig.anonKey);
+      headers.set("Accept", "application/json");
+      if (accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
+      return fetch(`${syncConfig.projectUrl}${path}`, { ...options, headers });
+    }
+
+    function saveAuthPayload(payload) {
+      const userId = safeText(payload?.user?.id, 160);
+      const accessToken = safeText(payload?.access_token, 20000);
+      const refreshToken = safeText(payload?.refresh_token, 20000);
+      const expiresIn = Number(payload?.expires_in);
+      const expiresAt = Number(payload?.expires_at) || Math.floor(Date.now() / 1000) + (Number.isFinite(expiresIn) ? expiresIn : 3600);
+      if (!userId || !accessToken || !refreshToken) throw new Error("Supabase did not return a complete sign-in session.");
+      saveSyncSession({
+        userId,
+        accessToken,
+        refreshToken,
+        email: safeText(payload?.user?.email, 320),
+        expiresAt
+      });
+    }
+
+    async function getActiveSyncSession() {
+      if (!syncSession) return null;
+      if (syncSession.expiresAt > Math.floor(Date.now() / 1000) + 60) return syncSession;
+      const response = await syncRequest("/auth/v1/token?grant_type=refresh_token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh_token: syncSession.refreshToken })
+      });
+      if (!response.ok) {
+        clearSyncSession();
+        throw new Error(await formatSyncError(response, "Your sign-in expired. Please sign in again."));
+      }
+      saveAuthPayload(await response.json());
+      return syncSession;
+    }
+
+    async function readCloudState(session) {
+      const response = await syncRequest(
+        "/rest/v1/team_invitation_states?select=state,updated_at&limit=1",
+        { method: "GET" },
+        session.accessToken
+      );
+      if (!response.ok) throw new Error(await formatSyncError(response, "Could not read the private cloud backup."));
+      const rows = await response.json();
+      if (!Array.isArray(rows) || !rows.length) return null;
+      const remote = normalizeState(rows[0].state);
+      const rowUpdatedAt = safeText(rows[0].updated_at, 80);
+      if (rowUpdatedAt) remote.updatedAt = rowUpdatedAt;
+      return remote;
+    }
+
+    async function writeCloudState(session) {
+      const response = await syncRequest(
+        "/rest/v1/team_invitation_states?on_conflict=user_id",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Prefer": "resolution=merge-duplicates,return=minimal"
+          },
+          body: JSON.stringify({
+            user_id: session.userId,
+            state,
+            updated_at: state.updatedAt
+          })
+        },
+        session.accessToken
+      );
+      if (!response.ok) throw new Error(await formatSyncError(response, "Could not save the private cloud backup."));
+    }
+
+    async function syncNow({ showMessage = false } = {}) {
+      if (!syncConfig || !syncSession || syncInFlight) return false;
+      syncInFlight = true;
+      renderSyncStatus();
+      try {
+        const session = await getActiveSyncSession();
+        if (!session) return false;
+        const remoteState = await readCloudState(session);
+        const localUpdatedAt = Date.parse(state.updatedAt) || 0;
+        const remoteUpdatedAt = Date.parse(remoteState?.updatedAt || "") || 0;
+
+        if (remoteState && (!hasLocalInvitationData() || remoteUpdatedAt > localUpdatedAt)) {
+          backupCurrentLocalState();
+          state = remoteState;
+          persistStateWithoutSync();
+          activeInviteId = invitesForProgram(activeProgram)
+            .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]?.id || null;
+          render();
+          if (showMessage) showToast("Loaded the newest private cloud copy.");
+        } else {
+          await writeCloudState(session);
+          if (showMessage) showToast("Private cloud backup is up to date.");
+        }
+        syncLastError = "";
+        return true;
+      } catch (error) {
+        console.error("Private sync failed.", error);
+        syncLastError = safeText(error.message, 400) || "Private sync could not finish.";
+        if (showMessage) showToast(error.message || "Private sync could not finish.");
+        return false;
+      } finally {
+        syncInFlight = false;
+        renderSyncStatus();
+      }
+    }
+
+    function scheduleCloudSync() {
+      if (!syncConfig || !syncSession) return;
+      window.clearTimeout(syncTimer);
+      syncTimer = window.setTimeout(() => {
+        void syncNow();
+      }, SYNC_DEBOUNCE_MS);
+      renderSyncStatus();
+    }
+
+    function populateSyncDialog() {
+      elements.syncProjectUrl.value = syncConfig?.projectUrl || "";
+      elements.syncAnonKey.value = syncConfig?.anonKey || "";
+      elements.syncEmail.value = syncSession?.email || "";
+      elements.syncPassword.value = "";
+      elements.signOutButton.disabled = !syncSession;
+      setSyncError();
+    }
+
+    function openSyncDialog() {
+      populateSyncDialog();
+      elements.syncDialog.showModal();
+    }
+
+    function saveSyncConfigurationFromDialog() {
+      const config = normalizeSyncConfig({
+        projectUrl: elements.syncProjectUrl.value,
+        anonKey: elements.syncAnonKey.value
+      });
+      if (!config) {
+        setSyncError("Enter an HTTPS project URL and its publishable or anon key. Do not use a service-role key.");
+        return false;
+      }
+      const changed = !syncConfig || syncConfig.projectUrl !== config.projectUrl || syncConfig.anonKey !== config.anonKey;
+      saveSyncConfig(config);
+      if (changed) clearSyncSession();
+      syncLastError = "";
+      elements.signOutButton.disabled = !syncSession;
+      setSyncError();
+      renderSyncStatus();
+      return true;
+    }
+
+    function readSyncCredentials() {
+      const email = safeText(elements.syncEmail.value, 320).trim();
+      const password = elements.syncPassword.value;
+      if (!saveSyncConfigurationFromDialog()) return null;
+      if (!email || !elements.syncEmail.checkValidity() || password.length < 8) {
+        setSyncError("Enter a valid email and a password with at least 8 characters.");
+        return null;
+      }
+      return { email, password };
+    }
+
+    async function signInAndSync() {
+      const credentials = readSyncCredentials();
+      if (!credentials) return;
+      setSyncError();
+      try {
+        const response = await syncRequest("/auth/v1/token?grant_type=password", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(credentials)
+        });
+        if (!response.ok) throw new Error(await formatSyncError(response, "Sign-in could not be completed."));
+        saveAuthPayload(await response.json());
+        elements.syncPassword.value = "";
+        renderSyncStatus();
+        const synced = await syncNow({ showMessage: true });
+        if (synced) elements.syncDialog.close();
+      } catch (error) {
+        setSyncError(error.message || "Sign-in could not be completed.");
+      }
+    }
+
+    async function createSyncAccount() {
+      const credentials = readSyncCredentials();
+      if (!credentials) return;
+      setSyncError();
+      try {
+        const response = await syncRequest("/auth/v1/signup", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(credentials)
+        });
+        if (!response.ok) throw new Error(await formatSyncError(response, "Account creation could not be completed."));
+        const payload = await response.json();
+        if (payload.access_token) {
+          saveAuthPayload(payload);
+          elements.syncPassword.value = "";
+          renderSyncStatus();
+          const synced = await syncNow({ showMessage: true });
+          if (synced) elements.syncDialog.close();
+        } else {
+          setSyncError("Check your email to confirm the account, then return here to sign in.");
+        }
+      } catch (error) {
+        setSyncError(error.message || "Account creation could not be completed.");
+      }
+    }
+
+    function signOutOfSync() {
+      clearSyncSession();
+      populateSyncDialog();
+      renderSyncStatus();
+      showToast("Signed out of private cloud sync on this device.");
     }
 
     function createId() {
@@ -2210,11 +2664,21 @@
     });
     elements.copyButton.addEventListener("click", copyActiveInvite);
     elements.printButton.addEventListener("click", printActiveInvite);
+    elements.syncButton.addEventListener("click", openSyncDialog);
+    elements.closeSyncButton.addEventListener("click", () => elements.syncDialog.close());
+    elements.saveSyncConfigButton.addEventListener("click", () => {
+      if (saveSyncConfigurationFromDialog()) showToast("Private cloud connection saved on this device.");
+    });
+    elements.signInButton.addEventListener("click", () => void signInAndSync());
+    elements.signUpButton.addEventListener("click", () => void createSyncAccount());
+    elements.signOutButton.addEventListener("click", signOutOfSync);
 
     renderStatusOptions();
     activeInviteId = invitesForProgram(activeProgram)
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]?.id || null;
     render();
+    renderSyncStatus();
+    if (syncConfig && syncSession) void syncNow();
   </script>
 </body>
 </html>
