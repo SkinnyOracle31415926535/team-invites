@@ -2,7 +2,6 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <script defer src="https://ryan-app-sync.ryan-666-mp3.chatgpt.site/coach-workspace.js"></script>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#92c73b">
   <meta name="description" content="Create and track private NGA and USAG team invitations.">
@@ -10,7 +9,6 @@
   <link rel="icon" type="image/png" href="favicon-envelope-v5.png">
   <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon-v5.png">
   <link rel="apple-touch-icon" sizes="167x167" href="apple-touch-icon-167x167-v5.png">
-  <link rel="stylesheet" href="team-invites-sync.css">
   <meta name="apple-mobile-web-app-title" content="Team Invites">
   <style>
     @font-face {
@@ -1118,10 +1116,6 @@
         <p class="brand-divider" aria-hidden="true">+---+---+---+</p>
         <p class="privacy-note">Kept on this device until you connect your private cloud sync.</p>
       </div>
-      <div class="header-actions">
-        <button class="button" id="syncButton" type="button">Set Up Private Sync</button>
-        <p class="sync-status" id="syncStatus" role="status">This device has an offline copy only.</p>
-      </div>
     </header>
 
     <div class="program-bar" role="tablist" aria-label="Team program">
@@ -1731,33 +1725,7 @@
       elements.syncError.textContent = message;
     }
 
-    function renderSyncStatus() {
-      if (LEGACY_SYNC_DISABLED) {
-        elements.syncButton.disabled = false;
-        elements.syncButton.textContent = "Sync & Backup";
-        elements.syncStatus.textContent = "App-scoped sync is ready. The older whole-app backup stays untouched.";
-        return;
-      }
-      if (!syncConfig) {
-        elements.syncButton.textContent = "Set Up Private Sync";
-        elements.syncStatus.textContent = "This device has an offline copy only.";
-        return;
-      }
-      if (!syncSession) {
-        elements.syncButton.textContent = "Sign In to Sync";
-        elements.syncStatus.textContent = "Private cloud connection saved. Sign in to sync this device.";
-        return;
-      }
-      if (syncLastError) {
-        elements.syncButton.textContent = "Private Sync Needs Attention";
-        elements.syncStatus.textContent = "The offline copy is safe, but the last cloud sync needs attention.";
-        return;
-      }
-      elements.syncButton.textContent = "Private Sync";
-      elements.syncStatus.textContent = syncInFlight
-        ? "Syncing your private backup…"
-        : "Private cloud sync is on. This device also keeps an offline copy.";
-    }
+    function renderSyncStatus() {}
 
     function hasLocalInvitationData() {
       if (state.invites.length) return true;
@@ -2758,7 +2726,5 @@
     renderSyncStatus();
     if (!LEGACY_SYNC_DISABLED && syncConfig && syncSession) void syncNow();
   </script>
-  <script src="https://ryan-app-sync.ryan-666-mp3.chatgpt.site/ryan-app-sync.js"></script>
-  <script src="team-invites-sync.js"></script>
 </body>
 </html>
