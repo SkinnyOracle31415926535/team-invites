@@ -4,6 +4,6 @@
   "type": "module",
   "scripts": {
     "build": "node build.mjs",
-    "test": "node --check temporary-data-transfer.js && node --check worker/index.js && node --test tests/temporary-data-transfer.test.cjs && npm run build"
+    "test": "node --check temporary-data-transfer.js && node --check transfer-theme.js && node --check worker/index.js && node --test tests/temporary-data-transfer.test.cjs tests/transfer-theme.test.cjs && npm run build"
   }
 }
