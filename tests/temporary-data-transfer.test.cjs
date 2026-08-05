@@ -65,6 +65,26 @@ test("temporary transfer accepts the established raw-backup shape", () => {
   assert.equal(restored.records[2].present, false);
 });
 
+test("sync conflict review bundle retains both competing versions", () => {
+  const { api } = load();
+  const bundle = api.buildConflictReviewBundle(options, {
+    key: "roster",
+    local: { present: true, encoding: "text", value: "Ava\nBea" },
+    remote: {
+      revision: 7,
+      updatedAt: "2026-08-05T00:00:00.000Z",
+      value: { present: true, encoding: "text", value: "Cory\nDrew" },
+    },
+  });
+  assert.equal(bundle.kind, "ryan_app_sync_conflict_review");
+  assert.deepEqual(JSON.parse(JSON.stringify(bundle.record.local)), { present: true, encoding: "text", value: "Ava\nBea" });
+  assert.deepEqual(JSON.parse(JSON.stringify(bundle.record.synchronized)), {
+    revision: 7,
+    updated_at: "2026-08-05T00:00:00.000Z",
+    value: { present: true, encoding: "text", value: "Cory\nDrew" },
+  });
+});
+
 test("Student Shuffle schema validation rejects invalid selected-class settings", () => {
   const { api } = load();
   const records = [

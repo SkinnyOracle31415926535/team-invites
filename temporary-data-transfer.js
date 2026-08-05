@@ -92,6 +92,41 @@
     };
   }
 
+  function recordReviewSummary(record) {
+    if (!record || !record.present) return "not present";
+    if (record.encoding === "text") return `text (${bytes(record.value)} bytes)`;
+    try {
+      return `JSON (${bytes(JSON.stringify(record.value))} bytes)`;
+    } catch {
+      return "unreadable JSON";
+    }
+  }
+
+  function buildConflictReviewBundle(options, conflict) {
+    return {
+      version: TRANSFER_VERSION,
+      kind: "ryan_app_sync_conflict_review",
+      app_id: options.appId,
+      created_at: new Date().toISOString(),
+      record: {
+        key: conflict.key,
+        local: conflict.local,
+        synchronized: {
+          revision: conflict.remote.revision,
+          updated_at: conflict.remote.updatedAt || null,
+          value: conflict.remote.value,
+        },
+      },
+    };
+  }
+
+  function downloadConflictReview(options, conflict) {
+    downloadJson(
+      buildConflictReviewBundle(options, conflict),
+      `${filenamePart(options.appId)}-sync-conflict-${filenamePart(conflict.key)}-${new Date().toISOString().slice(0, 10)}.json`,
+    );
+  }
+
   function validTimestamp(value) {
     return typeof value === "string" && value.length <= 80 && Number.isFinite(Date.parse(value));
   }
@@ -478,6 +513,7 @@
     const style = document.createElement("style");
     style.textContent = `
       .ryan-transfer-open{position:fixed!important;right:12px!important;bottom:12px!important;z-index:2147483000!important;min-height:42px!important;padding:8px 12px!important;border:2px solid #102117!important;border-radius:7px!important;background:#f4e253!important;color:#102117!important;box-shadow:3px 3px 0 #102117!important;font:700 14px/1.15 Tahoma,Verdana,Arial,sans-serif!important;letter-spacing:.02em!important;cursor:pointer!important}.ryan-transfer-open:focus-visible,.ryan-transfer-dialog button:focus-visible{outline:3px solid #1677ff!important;outline-offset:2px!important}.ryan-transfer-dialog{z-index:2147483001!important;width:min(700px,calc(100vw - 24px))!important;max-width:700px!important;max-height:calc(100vh - 24px)!important;margin:auto!important;padding:0!important;border:0!important;border-radius:12px!important;background:#f5f8ee!important;color:#102117!important;box-shadow:0 18px 60px rgba(0,0,0,.48)!important;font:16px/1.45 Tahoma,Verdana,Arial,sans-serif!important}.ryan-transfer-dialog::backdrop{background:rgba(0,0,0,.62)!important}.ryan-transfer-card{padding:18px!important}.ryan-transfer-card header{display:flex!important;justify-content:space-between!important;gap:16px!important;align-items:flex-start!important;padding-bottom:12px!important;border-bottom:2px solid #a8be9a!important}.ryan-transfer-card h2,.ryan-transfer-card h3,.ryan-transfer-card p{margin:0!important;color:#102117!important;text-align:left!important}.ryan-transfer-card h2{font-size:24px!important}.ryan-transfer-card h3{font-size:17px!important}.ryan-transfer-card small{font-weight:700!important;letter-spacing:.09em!important}.ryan-transfer-card header button{min-width:36px!important;min-height:36px!important;font-size:24px!important}.ryan-transfer-actions{display:flex!important;flex-wrap:wrap!important;gap:9px!important;margin:15px 0!important}.ryan-transfer-card button{display:inline-flex!important;align-items:center!important;justify-content:center!important;min-height:40px!important;padding:8px 11px!important;border:2px solid #102117!important;border-radius:6px!important;background:#d7f0b7!important;color:#102117!important;box-shadow:none!important;font:700 14px/1.2 Tahoma,Verdana,Arial,sans-serif!important;cursor:pointer!important}.ryan-transfer-card button:disabled{opacity:.56!important;cursor:not-allowed!important}.ryan-transfer-status,.ryan-transfer-preview,.ryan-transfer-sync{margin-top:13px!important;padding:12px!important;border:1px solid #8ba377!important;border-radius:7px!important;background:#fff!important}.ryan-transfer-preview h3,.ryan-transfer-sync h3{margin-bottom:5px!important}.ryan-transfer-preview button,.ryan-transfer-sync button{margin-top:10px!important}.ryan-transfer-footnote{margin-top:14px!important;font-size:12px!important;color:#34503c!important}.ryan-transfer-conflict{display:grid!important;grid-template-columns:1fr auto auto!important;gap:6px!important;align-items:center!important;margin-top:9px!important;padding-top:9px!important;border-top:1px solid #cad8be!important}.ryan-transfer-conflict button{min-height:32px!important;padding:5px 7px!important;font-size:12px!important}@media(max-width:520px){.ryan-transfer-card{padding:14px!important}.ryan-transfer-conflict{grid-template-columns:1fr!important}.ryan-transfer-open{right:8px!important;bottom:8px!important}}`;
+    style.textContent += ".ryan-transfer-conflict{display:grid!important;gap:6px!important;margin-top:9px!important;padding-top:9px!important;border-top:1px solid #cad8be!important}.ryan-transfer-conflict-details{font-size:12px!important;color:#34503c!important}.ryan-transfer-conflict-actions{display:flex!important;flex-wrap:wrap!important;gap:6px!important}";
     document.head.append(style);
     document.body.append(open, dialog);
 
@@ -561,15 +597,41 @@
           row.className = "ryan-transfer-conflict";
           const label = document.createElement("strong");
           label.textContent = conflict.key;
+          const details = document.createElement("p");
+          details.className = "ryan-transfer-conflict-details";
+          details.textContent = `This device: ${recordReviewSummary(conflict.local)}. Synchronized copy (revision ${conflict.remote.revision}): ${recordReviewSummary(conflict.remote.value)}. Both versions remain available until you choose.`;
+          const actions = document.createElement("div");
+          actions.className = "ryan-transfer-conflict-actions";
+          let reviewSaved = false;
+          const saveReview = () => {
+            if (reviewSaved) return;
+            downloadConflictReview(options, conflict);
+            reviewSaved = true;
+          };
+          const review = document.createElement("button");
+          review.type = "button";
+          review.textContent = "Download both versions";
+          review.addEventListener("click", () => {
+            saveReview();
+            review.textContent = "Both versions downloaded";
+            review.disabled = true;
+          });
           const local = document.createElement("button");
           local.type = "button";
           local.textContent = "Keep this device";
-          local.addEventListener("click", () => { void resolve(conflict, "local"); });
+          local.addEventListener("click", () => {
+            saveReview();
+            void resolve(conflict, "local");
+          });
           const remote = document.createElement("button");
           remote.type = "button";
           remote.textContent = "Use synchronized record";
-          remote.addEventListener("click", () => { void resolve(conflict, "remote"); });
-          row.append(label, local, remote);
+          remote.addEventListener("click", () => {
+            saveReview();
+            void resolve(conflict, "remote");
+          });
+          actions.append(review, local, remote);
+          row.append(label, details, actions);
           conflictsNode.append(row);
         }
       },
@@ -613,5 +675,5 @@
     else mount();
   }
 
-  window.TemporaryDataTransfer = Object.freeze({ install, buildBundle, normalizeBundle, validateByApp });
+  window.TemporaryDataTransfer = Object.freeze({ install, buildBundle, buildConflictReviewBundle, normalizeBundle, validateByApp });
 })();
