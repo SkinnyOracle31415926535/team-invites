@@ -1,0 +1,9 @@
+{
+  "name": "team-invitations-chatgpt-site",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node --check temporary-data-transfer.js && node --check worker/index.js && node --test tests/temporary-data-transfer.test.cjs && npm run build"
+  }
+}
